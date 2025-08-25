@@ -1,10 +1,11 @@
 import sqlite3
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 import warnings
 import re
+import os
 
 # Подавление предупреждений о совместимости
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -17,8 +18,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация
-BOT_TOKEN = "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0"  # Замените на ваш токен бота
-ADMIN_USER_IDS = [7610385492]  # Замените на ID администраторов
+BOT_TOKEN = "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0"
+ADMIN_USER_IDS = [7610385492]
 
 class FinancistBot:
     def __init__(self, db_path="financist.db"):
@@ -51,7 +52,8 @@ class FinancistBot:
                         status TEXT DEFAULT 'active',
                         creation_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         processing_user TEXT,
-                        blocking_date TIMESTAMP
+                        blocking_date TIMESTAMP,
+                        archived_date TIMESTAMP
                     )
                 ''')
                 
@@ -74,6 +76,28 @@ class FinancistBot:
                 except sqlite3.OperationalError as e:
                     if "duplicate column name" in str(e):
                         logger.info("Колонка 'processing_user' уже существует. Пропускаем.")
+                    else:
+                        raise e
+
+                # Добавление колонки 'blocking_date', если её нет
+                try:
+                    cursor.execute('ALTER TABLE applications ADD COLUMN blocking_date TIMESTAMP')
+                    conn.commit()
+                    logger.info("Колонка 'blocking_date' успешно добавлена в таблицу 'applications'.")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" in str(e):
+                        logger.info("Колонка 'blocking_date' уже существует. Пропускаем.")
+                    else:
+                        raise e
+
+                # Добавление колонки 'archived_date', если её нет
+                try:
+                    cursor.execute('ALTER TABLE applications ADD COLUMN archived_date TIMESTAMP')
+                    conn.commit()
+                    logger.info("Колонка 'archived_date' успешно добавлена в таблицу 'applications'.")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" in str(e):
+                        logger.info("Колонка 'archived_date' уже существует. Пропускаем.")
                     else:
                         raise e
                 
@@ -143,7 +167,9 @@ class FinancistBot:
     def is_admin_chat(self, chat_id):
         """Проверка, является ли чат админским"""
         admin_chat_id = self.get_setting('admin_chat_id')
-        return chat_id == admin_chat_id
+        # SQLite хранит REAL как FLOAT, поэтому сравниваем числа с небольшой погрешностью
+        return abs(chat_id - admin_chat_id) < 0.0001
+
 
 # Создание экземпляра бота
 try:
@@ -504,6 +530,15 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ORDER BY id
             ''', (today,))
             today_completed = cursor.fetchall()
+
+            # Заблокированные заявки за сегодня
+            cursor.execute('''
+                SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank
+                FROM applications 
+                WHERE status = 'blocked' AND date(blocking_date) = ?
+                ORDER BY id
+            ''', (today,))
+            today_blocked = cursor.fetchall()
             
             # Зажеванные заявки за сегодня
             cursor.execute('''
@@ -522,6 +557,11 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 SELECT SUM(initial_amount) FROM applications WHERE status = "completed"
             ''')
             total_processed_rub = cursor.fetchone()[0] or 0
+            
+            cursor.execute('''
+                SELECT SUM(initial_amount) FROM applications WHERE status = "blocked"
+            ''')
+            total_blocked_rub = cursor.fetchone()[0] or 0
 
             cursor.execute('''
                 SELECT SUM(initial_amount) FROM applications WHERE status = "chewed"
@@ -563,6 +603,14 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             message += "\nНет выполненных заявок за сегодня"
 
+        message += f"\n\nЗаблокированные заявки за сегодня ({len(today_blocked)}):"
+        if today_blocked:
+            for app in today_blocked:
+                app_id, initial, _, _, nickname, bank = app[0], app[1], app[2], app[3], app[4], app[5]
+                message += f"\n❌ Заявка №{app_id} | {nickname} | {initial:.0f}₽ ({bank})"
+        else:
+            message += "\nНет заблокированных заявок за сегодня"
+        
         message += f"\n\nЗажеванные заявки за сегодня ({len(today_chewed)}):"
         if today_chewed:
             for app in today_chewed:
@@ -576,6 +624,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Общая сводка:
 🕐 Ожидаем: {total_waiting:.0f}₽
 ✅ Обработано заявок на сумму: {total_processed_rub:.0f}₽
+❌ Заблокировано заявок на сумму: {total_blocked_rub:.0f}₽
 ⚠️ Зажевано заявок на сумму: {total_chewed_rub:.0f}₽
 💸 Выплачено: {total_paid_usd:.2f}$
 
@@ -592,6 +641,117 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка при генерации статистики: {e}")
         await update.message.reply_text("❌ Произошла ошибка при генерации статистики.")
+
+
+async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Команда /reset - сбрасывает все активные заявки и отправляет дневной отчёт
+    в админский чат.
+    """
+    user_id = update.effective_user.id
+    
+    if not bot_instance.is_admin(user_id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+        
+    admin_chat_id = bot_instance.get_setting('admin_chat_id')
+    if not admin_chat_id:
+        await update.message.reply_text("❌ Админский чат не установлен. Используйте /set_admin_chat.")
+        return
+
+    # 1. Формирование и отправка статистики за текущий день в админский чат
+    daily_stats_message = await generate_daily_stats(context)
+    if daily_stats_message:
+        await context.bot.send_message(chat_id=int(admin_chat_id), text="📈 **Дневной отчёт перед сбросом:**\n\n" + daily_stats_message, parse_mode='Markdown')
+        await update.message.reply_text("✅ Статистика за день была успешно отправлена в админский чат.")
+
+    # 2. Сброс всех активных, в работе и заблокированных заявок
+    try:
+        with sqlite3.connect(bot_instance.db_path) as conn:
+            cursor = conn.cursor()
+            
+            archived_date = datetime.now()
+            
+            # Обновляем все заявки, которые не были завершены, на статус 'archived'
+            cursor.execute('''
+                UPDATE applications
+                SET status = 'archived', archived_date = ?
+                WHERE status IN ('active', 'in_progress', 'chewed', 'blocked')
+            ''', (archived_date,))
+            
+            rows_updated = cursor.rowcount
+            conn.commit()
+            
+        await update.message.reply_text(f"✅ Заявки успешно сброшены. Всего архивировано: {rows_updated}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при сбросе заявок: {e}")
+        await update.message.reply_text("❌ Произошла ошибка при сбросе заявок.")
+
+async def generate_daily_stats(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Генерирует полный отчёт за текущий день.
+    """
+    try:
+        with sqlite3.connect(bot_instance.db_path) as conn:
+            cursor = conn.cursor()
+            
+            currency_rate = bot_instance.get_setting('currency_rate')
+            today = date.today().isoformat()
+
+            cursor.execute('''
+                SELECT id, initial_amount, final_amount, user_nickname, bank, status, processing_user
+                FROM applications 
+                WHERE date(blocking_date) = ?
+                ORDER BY blocking_date
+            ''', (today,))
+            today_applications = cursor.fetchall()
+            
+            total_completed_rub = sum(app[1] for app in today_applications if app[5] == 'completed')
+            total_blocked_rub = sum(app[1] for app in today_applications if app[5] == 'blocked')
+            total_chewed_rub = sum(app[1] for app in today_applications if app[5] == 'chewed')
+            total_paid_rub = sum(app[2] for app in today_applications if app[5] == 'completed')
+            total_profit_rub = total_completed_rub - total_paid_rub
+            total_profit_usd = total_profit_rub / currency_rate if currency_rate > 0 else 0
+            
+            stats_message = f"🗓️ **Отчёт за {datetime.now().strftime('%d.%m.%Y')}**\n\n"
+            
+            stats_message += "--- Завершенные заявки ---\n"
+            if any(app[5] == 'completed' for app in today_applications):
+                for app in today_applications:
+                    if app[5] == 'completed':
+                        final_usd = app[2] / currency_rate if currency_rate > 0 else 0
+                        stats_message += f"✅ #{app[0]} | {app[3]} | {app[1]:.0f}₽ ({app[4]}) -> {final_usd:.2f}$ | Принимал: @{app[6]}\n"
+            else:
+                stats_message += "Нет выполненных заявок\n"
+                
+            stats_message += "\n--- Заблокированные заявки ---\n"
+            if any(app[5] == 'blocked' for app in today_applications):
+                for app in today_applications:
+                    if app[5] == 'blocked':
+                        stats_message += f"❌ #{app[0]} | {app[3]} | {app[1]:.0f}₽ ({app[4]}) | Принимал: @{app[6]}\n"
+            else:
+                stats_message += "Нет заблокированных заявок\n"
+
+            stats_message += "\n--- Зажеванные заявки ---\n"
+            if any(app[5] == 'chewed' for app in today_applications):
+                for app in today_applications:
+                    if app[5] == 'chewed':
+                        stats_message += f"⚠️ #{app[0]} | {app[3]} | {app[1]:.0f}₽ ({app[4]}) | Принимал: @{app[6]}\n"
+            else:
+                stats_message += "Нет зажеванных заявок\n"
+            
+            stats_message += f"\n--- Итого ---\n"
+            stats_message += f"✅ Завершено: {len([a for a in today_applications if a[5] == 'completed'])} на {total_completed_rub:.0f}₽\n"
+            stats_message += f"❌ Заблокировано: {len([a for a in today_applications if a[5] == 'blocked'])} на {total_blocked_rub:.0f}₽\n"
+            stats_message += f"⚠️ Зажевано: {len([a for a in today_applications if a[5] == 'chewed'])} на {total_chewed_rub:.0f}₽\n"
+            stats_message += f"💰 Прибыль: {total_profit_rub:.0f}₽ ({total_profit_usd:.2f}$)\n"
+            
+            return stats_message
+            
+    except Exception as e:
+        logger.error(f"Ошибка при генерации дневной статистики: {e}")
+        return None
 
 async def set_admin_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /set_admin_chat - для установки текущего чата как админского"""
@@ -648,6 +808,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • /chewed [номер] - отметить заявку как зажеванную (или ответить на сообщение)
 • /debt [пользователь] [сумма] - записать выданный долг
 • /stats - показать статистику
+• /reset - сбросить все заявки и отправить дневной отчёт
 • /help - показать эту справку
 
 ⚙️ Административные команды:
@@ -669,9 +830,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Основная функция запуска бота"""
-    if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+    if BOT_TOKEN == "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0":
         print("❌ Ошибка: Не установлен токен бота!")
-        print("Измените BOT_TOKEN в файле на токен, полученный от @BotFather")
+        print("Замените BOT_TOKEN в файле на токен, полученный от @BotFather")
         return
     
     if ADMIN_USER_IDS == [123456789]:
@@ -691,6 +852,7 @@ def main():
         application.add_handler(CommandHandler("debt", add_debt_command))
         application.add_handler(CommandHandler("balance", balance_command))
         application.add_handler(CommandHandler("stats", stats_command))
+        application.add_handler(CommandHandler("reset", reset_command))
         application.add_handler(CommandHandler("set_admin_chat", set_admin_chat_command))
         application.add_handler(CommandHandler("rate", set_currency_rate_command))
         application.add_handler(CommandHandler("help", help_command))
