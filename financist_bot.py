@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 # !!! ЗАМЕНИТЕ ЭТО НА ВАШИ ДАННЫЕ !!!
 BOT_TOKEN = "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0"  # Замените на ваш токен бота
 ADMIN_USER_IDS = [7610385492]
-
 # --- Управление базой данных ---
 class FinancistBot:
     def __init__(self, db_path="financist.db"):
@@ -170,6 +169,12 @@ def get_app_id_from_reply(update: Update):
         logger.error(f"Ошибка при получении ID заявки из ответа: {e}")
         return None
 
+def get_processing_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Определяет пользователя-исполнителя из аргументов или текущего пользователя."""
+    if context.args and context.args[-1].startswith('@'):
+        return context.args[-1]
+    return "@" + (update.effective_user.username or update.effective_user.first_name)
+
 # ================== КОМАНДЫ ==================
 
 async def set_rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -245,7 +250,7 @@ async def create_application_command(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text("❌ Произошла ошибка при создании заявки.")
 
 async def in_progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /in_progress [номер_заявки] или ответ на сообщение"""
+    """Команда /in_progress [номер_заявки] [ник_исполнителя] или ответ на сообщение"""
     if not bot_instance.is_admin(update.effective_user.id):
         await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
         return
@@ -253,7 +258,7 @@ async def in_progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         app_id = None
         if context.args:
-            app_id = int(context.args[0])
+            app_id = int(re.sub(r'[^0-9]', '', context.args[0]))
         else:
             app_id = get_app_id_from_reply(update)
         
@@ -272,7 +277,7 @@ async def in_progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await update.message.reply_text("❌ Активная заявка с таким номером не найдена.")
                 return
 
-            processing_user = update.effective_user.username or update.effective_user.first_name
+            processing_user = get_processing_user(update, context)
             cursor.execute('''
                 UPDATE applications 
                 SET status = 'in_progress', processing_user = ?
@@ -286,7 +291,7 @@ async def in_progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 Банк: {application[5]}
 Ставка: {application[3]:.1f}%
 К переводу: {application[4]:.0f}₽
-Принимал: @{processing_user}"""
+Принимал: {processing_user}"""
             
             await update.message.reply_text(message)
             
@@ -298,7 +303,7 @@ async def in_progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def accept_application_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /accept [номер_заявки] или ответ на сообщение"""
+    """Команда /accept [номер_заявки] [ник_исполнителя] или ответ на сообщение"""
     if not bot_instance.is_admin(update.effective_user.id):
         await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
         return
@@ -306,7 +311,7 @@ async def accept_application_command(update: Update, context: ContextTypes.DEFAU
     try:
         app_id = None
         if context.args:
-            app_id = int(context.args[0])
+            app_id = int(re.sub(r'[^0-9]', '', context.args[0]))
         else:
             app_id = get_app_id_from_reply(update)
 
@@ -325,7 +330,7 @@ async def accept_application_command(update: Update, context: ContextTypes.DEFAU
                 await update.message.reply_text("❌ Активная заявка с таким номером не найдена.")
                 return
             
-            processing_user = update.effective_user.username or update.effective_user.first_name
+            processing_user = get_processing_user(update, context)
             blocking_date = datetime.now()
             cursor.execute('''
                 UPDATE applications 
@@ -336,7 +341,7 @@ async def accept_application_command(update: Update, context: ContextTypes.DEFAU
             
             message = f"""✅ Заявка №{app_id}
 Статус: завершена
-Принимал: @{processing_user}"""
+Принимал: {processing_user}"""
             
             await update.message.reply_text(message)
             
@@ -348,7 +353,7 @@ async def accept_application_command(update: Update, context: ContextTypes.DEFAU
 
 
 async def chewed_application_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /chewed [номер_заявки] или ответ на сообщение"""
+    """Команда /chewed [номер_заявки] [ник_исполнителя] или ответ на сообщение"""
     if not bot_instance.is_admin(update.effective_user.id):
         await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
         return
@@ -356,7 +361,7 @@ async def chewed_application_command(update: Update, context: ContextTypes.DEFAU
     try:
         app_id = None
         if context.args:
-            app_id = int(context.args[0])
+            app_id = int(re.sub(r'[^0-9]', '', context.args[0]))
         else:
             app_id = get_app_id_from_reply(update)
 
@@ -375,7 +380,7 @@ async def chewed_application_command(update: Update, context: ContextTypes.DEFAU
                 await update.message.reply_text("❌ Активная заявка с таким номером не найдена.")
                 return
             
-            processing_user = update.effective_user.username or update.effective_user.first_name
+            processing_user = get_processing_user(update, context)
             blocking_date = datetime.now()
             cursor.execute('''
                 UPDATE applications 
@@ -387,7 +392,7 @@ async def chewed_application_command(update: Update, context: ContextTypes.DEFAU
             message = f"""⚠️ Заявка №{app_id}
 Сумма: {application[2]:.0f}₽
 Банк: {application[5]}
-Принимал: @{processing_user}
+Принимал: {processing_user}
 Статус: Банкомат зажевал"""
             
             await update.message.reply_text(message)
@@ -397,6 +402,44 @@ async def chewed_application_command(update: Update, context: ContextTypes.DEFAU
     except Exception as e:
         logger.error(f"Ошибка в команде /chewed: {e}")
         await update.message.reply_text("❌ Произошла ошибка при выполнении команды.")
+
+async def delete_application_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /delete [номер_заявки] или ответ на сообщение"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+        
+    try:
+        app_id = None
+        if context.args:
+            app_id = int(re.sub(r'[^0-9]', '', context.args[0]))
+        else:
+            app_id = get_app_id_from_reply(update)
+
+        if not app_id:
+            await update.message.reply_text("❌ Укажите номер заявки или ответьте на сообщение с заявкой.")
+            return
+        
+        with sqlite3.connect(bot_instance.db_path) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT id FROM applications WHERE id = ?', (app_id,))
+            application = cursor.fetchone()
+            
+            if not application:
+                await update.message.reply_text(f"❌ Заявка с номером {app_id} не найдена.")
+                return
+            
+            cursor.execute('DELETE FROM applications WHERE id = ?', (app_id,))
+            conn.commit()
+            
+            await update.message.reply_text(f"✅ Заявка №{app_id} успешно удалена.")
+            
+    except ValueError:
+        await update.message.reply_text("❌ Неверный формат номера заявки.")
+    except Exception as e:
+        logger.error(f"Ошибка при удалении заявки: {e}")
+        await update.message.reply_text("❌ Произошла ошибка при удалении заявки.")
 
 
 async def add_debt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -509,7 +552,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             today = date.today().isoformat()
             cursor.execute('''
-                SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank 
+                SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank, processing_user
                 FROM applications 
                 WHERE status = 'completed' AND date(blocking_date) = ?
                 ORDER BY id
@@ -517,7 +560,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             today_completed = cursor.fetchall()
 
             cursor.execute('''
-                SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank 
+                SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank, processing_user
                 FROM applications 
                 WHERE status = 'blocked' AND date(blocking_date) = ?
                 ORDER BY id
@@ -525,7 +568,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             today_blocked = cursor.fetchall()
             
             cursor.execute('''
-                SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank
+                SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank, processing_user
                 FROM applications 
                 WHERE status = 'chewed' AND date(blocking_date) = ?
                 ORDER BY id
@@ -576,25 +619,25 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if today_completed:
             for app in today_completed:
-                app_id, initial, rate, final, nickname, bank = app
+                app_id, initial, rate, final, nickname, bank, processing_user = app
                 usd_amount = final / currency_rate if currency_rate > 0 else 0
-                message += f"\n✅ Заявка №{app_id} | {nickname} | {initial:.0f}₽ ({bank}) - {rate:.1f}% = {usd_amount:.2f}$"
+                message += f"\n✅ Заявка №{app_id} | {nickname} | {initial:.0f}₽ ({bank}) - {rate:.1f}% = {usd_amount:.2f}$ | Принимал: {processing_user}"
         else:
             message += "\nНет выполненных заявок за сегодня"
 
         message += f"\n\nЗаблокированные заявки за сегодня ({len(today_blocked)}):"
         if today_blocked:
             for app in today_blocked:
-                app_id, initial, _, _, nickname, bank = app
-                message += f"\n❌ Заявка №{app_id} | {nickname} | {initial:.0f}₽ ({bank})"
+                app_id, initial, _, _, nickname, bank, processing_user = app
+                message += f"\n❌ Заявка №{app_id} | {nickname} | {initial:.0f}₽ ({bank}) | Принимал: {processing_user}"
         else:
             message += "\nНет заблокированных заявок за сегодня"
         
         message += f"\n\nЗажеванные заявки за сегодня ({len(today_chewed)}):"
         if today_chewed:
             for app in today_chewed:
-                app_id, initial, _, _, nickname, bank = app
-                message += f"\n⚠️ Заявка №{app_id} | {nickname} | {initial:.0f}₽ ({bank})"
+                app_id, initial, _, _, nickname, bank, processing_user = app
+                message += f"\n⚠️ Заявка №{app_id} | {nickname} | {initial:.0f}₽ ({bank}) | Принимал: {processing_user}"
         else:
             message += "\nНет зажеванных заявок за сегодня"
 
@@ -697,7 +740,7 @@ async def generate_daily_stats():
                 for app in today_applications:
                     if app[5] == 'completed':
                         final_usd = app[2] / currency_rate if currency_rate > 0 else 0
-                        stats_message += f"✅ #{app[0]} | {app[3]} | {app[1]:.0f}₽ ({app[4]}) -> {final_usd:.2f}$ | Принимал: @{app[6]}\n"
+                        stats_message += f"✅ #{app[0]} | {app[3]} | {app[1]:.0f}₽ ({app[4]}) -> {final_usd:.2f}$ | Принимал: {app[6]}\n"
             else:
                 stats_message += "Нет выполненных заявок\n"
                 
@@ -705,7 +748,7 @@ async def generate_daily_stats():
             if any(app[5] == 'blocked' for app in today_applications):
                 for app in today_applications:
                     if app[5] == 'blocked':
-                        stats_message += f"❌ #{app[0]} | {app[3]} | {app[1]:.0f}₽ ({app[4]}) | Принимал: @{app[6]}\n"
+                        stats_message += f"❌ #{app[0]} | {app[3]} | {app[1]:.0f}₽ ({app[4]}) | Принимал: {app[6]}\n"
             else:
                 stats_message += "Нет заблокированных заявок\n"
 
@@ -713,7 +756,7 @@ async def generate_daily_stats():
             if any(app[5] == 'chewed' for app in today_applications):
                 for app in today_applications:
                     if app[5] == 'chewed':
-                        stats_message += f"⚠️ #{app[0]} | {app[3]} | {app[1]:.0f}₽ ({app[4]}) | Принимал: @{app[6]}\n"
+                        stats_message += f"⚠️ #{app[0]} | {app[3]} | {app[1]:.0f}₽ ({app[4]}) | Принимал: {app[6]}\n"
             else:
                 stats_message += "Нет зажеванных заявок\n"
             
@@ -779,9 +822,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 📋 Общие команды:
 • /app [ник] [сумма] [банк] - создать новую заявку
-• /in или /in_progress [номер] - взять заявку в работу (или ответить на сообщение)
-• /accept [номер] - завершить заявку (или ответить на сообщение)
-• /chewed [номер] - отметить заявку как зажеванную (или ответить на сообщение)
+• /in или /in_progress [номер] [ник_исполнителя] - взять заявку в работу
+• /accept [номер] [ник_исполнителя] - завершить заявку
+• /chewed [номер] [ник_исполнителя] - отметить заявку как зажеванную
+• /del [номер] - удалить заявку
 • /debt [пользователь] [сумма] - записать выданный долг
 • /stats - показать статистику
 • /reset - сбросить все заявки и отправить дневной отчёт
@@ -795,9 +839,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 📝 Примеры:
 • /app @user 100000 Альфа
-• /in 1
-• /accept 2
-• /chewed 4
+• /in 1 @butch
+• /accept 2 @krip
+• /chewed 4 @butch
+• /del 5
 • /debt @user 5000
 • /percent 6
 • /rate 95.5"""
@@ -822,7 +867,8 @@ def main():
     if ADMIN_USER_IDS == [YOUR_ADMIN_ID]:
         print("⚠️ Предупреждение: Не установлены ID администраторов!")
         print("Измените ADMIN_USER_IDS в файле на ваши Telegram User ID")
-    
+        return
+
     try:
         application = Application.builder().token(BOT_TOKEN).build()
         
@@ -834,6 +880,7 @@ def main():
         application.add_handler(CommandHandler(["in_progress", "in"], in_progress_command))
         application.add_handler(CommandHandler("accept", accept_application_command))
         application.add_handler(CommandHandler("chewed", chewed_application_command))
+        application.add_handler(CommandHandler(["delete", "del"], delete_application_command))
         application.add_handler(CommandHandler("debt", add_debt_command))
         application.add_handler(CommandHandler("balance", balance_command))
         application.add_handler(CommandHandler("stats", stats_command))
@@ -856,4 +903,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
