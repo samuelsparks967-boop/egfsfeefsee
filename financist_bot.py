@@ -17,10 +17,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация
-BOT_TOKEN = "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0"
-ADMIN_USER_IDS = [7610385492]
+# --- Конфигурация ---
+# !!! ЗАМЕНИТЕ ЭТО НА ВАШИ ДАННЫЕ !!!
+BOT_TOKEN = "8016985561:AAF3E63eZ_94wdCXWjFunE--Dxkfgy9FEPg"  # Замените на ваш токен бота
+ADMIN_USER_IDS = [6772666050, 7610385492]
 
+# --- Управление базой данных ---
 class FinancistBot:
     def __init__(self, db_path="financist.db"):
         self.db_path = db_path
@@ -32,7 +34,6 @@ class FinancistBot:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
-                # Таблица настроек
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS settings (
                         key TEXT PRIMARY KEY,
@@ -40,7 +41,6 @@ class FinancistBot:
                     )
                 ''')
                 
-                # Таблица заявок
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS applications (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,51 +57,30 @@ class FinancistBot:
                     )
                 ''')
                 
-                # Добавление колонки 'bank', если её нет
                 try:
                     cursor.execute('ALTER TABLE applications ADD COLUMN bank TEXT')
                     conn.commit()
-                    logger.info("Колонка 'bank' успешно добавлена в таблицу 'applications'.")
-                except sqlite3.OperationalError as e:
-                    if "duplicate column name" in str(e):
-                        logger.info("Колонка 'bank' уже существует. Пропускаем.")
-                    else:
-                        raise e
+                except sqlite3.OperationalError:
+                    pass
 
-                # Добавление колонки 'processing_user', если её нет
                 try:
                     cursor.execute('ALTER TABLE applications ADD COLUMN processing_user TEXT')
                     conn.commit()
-                    logger.info("Колонка 'processing_user' успешно добавлена в таблицу 'applications'.")
-                except sqlite3.OperationalError as e:
-                    if "duplicate column name" in str(e):
-                        logger.info("Колонка 'processing_user' уже существует. Пропускаем.")
-                    else:
-                        raise e
+                except sqlite3.OperationalError:
+                    pass
 
-                # Добавление колонки 'blocking_date', если её нет
                 try:
                     cursor.execute('ALTER TABLE applications ADD COLUMN blocking_date TIMESTAMP')
                     conn.commit()
-                    logger.info("Колонка 'blocking_date' успешно добавлена в таблицу 'applications'.")
-                except sqlite3.OperationalError as e:
-                    if "duplicate column name" in str(e):
-                        logger.info("Колонка 'blocking_date' уже существует. Пропускаем.")
-                    else:
-                        raise e
+                except sqlite3.OperationalError:
+                    pass
 
-                # Добавление колонки 'archived_date', если её нет
                 try:
                     cursor.execute('ALTER TABLE applications ADD COLUMN archived_date TIMESTAMP')
                     conn.commit()
-                    logger.info("Колонка 'archived_date' успешно добавлена в таблицу 'applications'.")
-                except sqlite3.OperationalError as e:
-                    if "duplicate column name" in str(e):
-                        logger.info("Колонка 'archived_date' уже существует. Пропускаем.")
-                    else:
-                        raise e
+                except sqlite3.OperationalError:
+                    pass
                 
-                # Таблица долгов
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS debts (
                         user_nickname TEXT PRIMARY KEY,
@@ -109,7 +88,6 @@ class FinancistBot:
                     )
                 ''')
                 
-                # Таблица баланса
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS balance (
                         id INTEGER PRIMARY KEY DEFAULT 1,
@@ -117,7 +95,6 @@ class FinancistBot:
                     )
                 ''')
                 
-                # Инициализация настроек по умолчанию
                 cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', 
                                ('current_rate', 5.0))
                 cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', 
@@ -125,7 +102,6 @@ class FinancistBot:
                 cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', 
                                ('currency_rate', 100.0))
                 
-                # Инициализация баланса
                 cursor.execute('INSERT OR IGNORE INTO balance (id, total_profit) VALUES (?, ?)', 
                                (1, 0.0))
                 
@@ -167,9 +143,7 @@ class FinancistBot:
     def is_admin_chat(self, chat_id):
         """Проверка, является ли чат админским"""
         admin_chat_id = self.get_setting('admin_chat_id')
-        # SQLite хранит REAL как FLOAT, поэтому сравниваем числа с небольшой погрешностью
         return abs(chat_id - admin_chat_id) < 0.0001
-
 
 # Создание экземпляра бота
 try:
@@ -200,13 +174,11 @@ def get_app_id_from_reply(update: Update):
 
 async def set_rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /percent [число]"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+    
     try:
-        user_id = update.effective_user.id
-        
-        if not bot_instance.is_admin(user_id):
-            await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
-            return
-        
         if not context.args or len(context.args) != 1:
             await update.message.reply_text("❌ Использование: /percent [число]")
             return
@@ -227,6 +199,10 @@ async def set_rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def create_application_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /app [ник_пользователя] [сумма] [банк]"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+
     try:
         if not context.args or len(context.args) != 3:
             await update.message.reply_text("❌ Использование: /app [ник_пользователя] [сумма] [банк]")
@@ -240,13 +216,9 @@ async def create_application_command(update: Update, context: ContextTypes.DEFAU
             await update.message.reply_text("❌ Сумма должна быть положительной.")
             return
         
-        # Получение текущей процентной ставки
         current_rate = bot_instance.get_setting('current_rate')
-        
-        # Вычисление суммы к переводу (вычет комиссии)
         final_amount = initial_amount * (1 - current_rate / 100)
         
-        # Сохранение заявки в БД
         with sqlite3.connect(bot_instance.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -257,8 +229,7 @@ async def create_application_command(update: Update, context: ContextTypes.DEFAU
             app_id = cursor.lastrowid
             conn.commit()
         
-        # Отправка сообщения
-        message = f"""#️⃣Заявка №{app_id}
+        message = f"""#️⃣ Заявка №{app_id}
 Сумма: {initial_amount:.0f}₽
 Банк: {bank}
 Ставка: {current_rate:.1f}%
@@ -275,6 +246,10 @@ async def create_application_command(update: Update, context: ContextTypes.DEFAU
 
 async def in_progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /in_progress [номер_заявки] или ответ на сообщение"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+
     try:
         app_id = None
         if context.args:
@@ -305,7 +280,7 @@ async def in_progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             ''', (processing_user, app_id))
             conn.commit()
             
-            message = f"""🔄Заявка №{app_id}
+            message = f"""🔄 Заявка №{app_id}
 Статус: в работе
 Сумма: {application[2]:.0f}₽
 Банк: {application[5]}
@@ -324,6 +299,10 @@ async def in_progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def accept_application_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /accept [номер_заявки] или ответ на сообщение"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+
     try:
         app_id = None
         if context.args:
@@ -370,6 +349,10 @@ async def accept_application_command(update: Update, context: ContextTypes.DEFAU
 
 async def chewed_application_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /chewed [номер_заявки] или ответ на сообщение"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+        
     try:
         app_id = None
         if context.args:
@@ -418,6 +401,10 @@ async def chewed_application_command(update: Update, context: ContextTypes.DEFAU
 
 async def add_debt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /debt [пользователь] [сумма]"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+        
     try:
         if not context.args or len(context.args) != 2:
             await update.message.reply_text("❌ Использование: /debt [пользователь] [сумма]")
@@ -433,7 +420,6 @@ async def add_debt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with sqlite3.connect(bot_instance.db_path) as conn:
             cursor = conn.cursor()
             
-            # Проверка существования долга
             cursor.execute('SELECT debt_amount FROM debts WHERE user_nickname = ?', 
                            (user_nickname,))
             existing_debt = cursor.fetchone()
@@ -461,13 +447,12 @@ async def add_debt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /balance [сумма] - пополнить или показать баланс"""
-    try:
-        user_id = update.effective_user.id
-        chat_id = update.effective_chat.id
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
         
-        if not bot_instance.is_admin(user_id):
-            await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
-            return
+    try:
+        chat_id = update.effective_chat.id
         
         if not bot_instance.is_admin_chat(chat_id):
             await update.message.reply_text("❌ Эта команда доступна только в админском чате.")
@@ -502,18 +487,19 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /stats"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+
     try:
-        chat_id = update.effective_chat.id
         chat_title = update.effective_chat.title or "Личный чат"
         current_date = datetime.now().strftime('%d.%m.%Y')
         
         with sqlite3.connect(bot_instance.db_path) as conn:
             cursor = conn.cursor()
             
-            # Получение настроек
             currency_rate = bot_instance.get_setting('currency_rate')
             
-            # Активные заявки
             cursor.execute('''
                 SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank, status 
                 FROM applications WHERE status = 'active' OR status = 'in_progress'
@@ -521,7 +507,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ''')
             active_applications = cursor.fetchall()
             
-            # Завершенные заявки за сегодня
             today = date.today().isoformat()
             cursor.execute('''
                 SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank 
@@ -531,16 +516,14 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ''', (today,))
             today_completed = cursor.fetchall()
 
-            # Заблокированные заявки за сегодня
             cursor.execute('''
-                SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank
+                SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank 
                 FROM applications 
                 WHERE status = 'blocked' AND date(blocking_date) = ?
                 ORDER BY id
             ''', (today,))
             today_blocked = cursor.fetchall()
             
-            # Зажеванные заявки за сегодня
             cursor.execute('''
                 SELECT id, initial_amount, rate_percentage, final_amount, user_nickname, bank
                 FROM applications 
@@ -549,7 +532,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ''', (today,))
             today_chewed = cursor.fetchall()
             
-            # Общая статистика
             cursor.execute('SELECT SUM(initial_amount) FROM applications WHERE status = "active" OR status = "in_progress"')
             total_waiting = cursor.fetchone()[0] or 0
             
@@ -574,20 +556,17 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_paid_rub = cursor.fetchone()[0] or 0
             total_paid_usd = total_paid_rub / currency_rate if currency_rate > 0 else 0
             
-            # Должники
             cursor.execute('SELECT user_nickname, debt_amount FROM debts WHERE debt_amount > 0')
             debtors = cursor.fetchall()
             
-        # Формирование сообщения
         message = f"""👨‍💻 {chat_title} | {current_date}
-🔐️ ID чата: {chat_id}
 ⚜️ Статистика:
 
 Активные заявки (в ожидании и в работе):"""
         
         if active_applications:
             for app in active_applications:
-                app_id, initial, rate, final, nickname, bank, status = app[0], app[1], app[2], app[3], app[4], app[5], app[6]
+                app_id, initial, _, _, nickname, bank, status = app
                 status_emoji = "🕐" if status == 'active' else "🔄"
                 message += f"\n{status_emoji} Заявка №{app_id} | {nickname} | {initial:.0f}₽ | {bank}"
         else:
@@ -597,7 +576,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if today_completed:
             for app in today_completed:
-                app_id, initial, rate, final, nickname, bank = app[0], app[1], app[2], app[3], app[4], app[5]
+                app_id, initial, rate, final, nickname, bank = app
                 usd_amount = final / currency_rate if currency_rate > 0 else 0
                 message += f"\n✅ Заявка №{app_id} | {nickname} | {initial:.0f}₽ ({bank}) - {rate:.1f}% = {usd_amount:.2f}$"
         else:
@@ -606,7 +585,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"\n\nЗаблокированные заявки за сегодня ({len(today_blocked)}):"
         if today_blocked:
             for app in today_blocked:
-                app_id, initial, _, _, nickname, bank = app[0], app[1], app[2], app[3], app[4], app[5]
+                app_id, initial, _, _, nickname, bank = app
                 message += f"\n❌ Заявка №{app_id} | {nickname} | {initial:.0f}₽ ({bank})"
         else:
             message += "\nНет заблокированных заявок за сегодня"
@@ -614,7 +593,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"\n\nЗажеванные заявки за сегодня ({len(today_chewed)}):"
         if today_chewed:
             for app in today_chewed:
-                app_id, initial, _, _, nickname, bank = app[0], app[1], app[2], app[3], app[4], app[5]
+                app_id, initial, _, _, nickname, bank = app
                 message += f"\n⚠️ Заявка №{app_id} | {nickname} | {initial:.0f}₽ ({bank})"
         else:
             message += "\nНет зажеванных заявок за сегодня"
@@ -659,20 +638,17 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Админский чат не установлен. Используйте /set_admin_chat.")
         return
 
-    # 1. Формирование и отправка статистики за текущий день в админский чат
-    daily_stats_message = await generate_daily_stats(context)
+    daily_stats_message = await generate_daily_stats()
     if daily_stats_message:
         await context.bot.send_message(chat_id=int(admin_chat_id), text="📈 **Дневной отчёт перед сбросом:**\n\n" + daily_stats_message, parse_mode='Markdown')
         await update.message.reply_text("✅ Статистика за день была успешно отправлена в админский чат.")
 
-    # 2. Сброс всех активных, в работе и заблокированных заявок
     try:
         with sqlite3.connect(bot_instance.db_path) as conn:
             cursor = conn.cursor()
             
             archived_date = datetime.now()
             
-            # Обновляем все заявки, которые не были завершены, на статус 'archived'
             cursor.execute('''
                 UPDATE applications
                 SET status = 'archived', archived_date = ?
@@ -688,7 +664,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка при сбросе заявок: {e}")
         await update.message.reply_text("❌ Произошла ошибка при сбросе заявок.")
 
-async def generate_daily_stats(context: ContextTypes.DEFAULT_TYPE):
+async def generate_daily_stats():
     """
     Генерирует полный отчёт за текущий день.
     """
@@ -755,14 +731,12 @@ async def generate_daily_stats(context: ContextTypes.DEFAULT_TYPE):
 
 async def set_admin_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /set_admin_chat - для установки текущего чата как админского"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+        
     try:
-        user_id = update.effective_user.id
         chat_id = update.effective_chat.id
-        
-        if not bot_instance.is_admin(user_id):
-            await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
-            return
-        
         bot_instance.set_setting('admin_chat_id', chat_id)
         await update.message.reply_text(f"✅ Админский чат установлен: {chat_id}")
         
@@ -772,13 +746,11 @@ async def set_admin_chat_command(update: Update, context: ContextTypes.DEFAULT_T
 
 async def set_currency_rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /rate [число] - для установки курса валют"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+        
     try:
-        user_id = update.effective_user.id
-        
-        if not bot_instance.is_admin(user_id):
-            await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
-            return
-        
         if not context.args or len(context.args) != 1:
             await update.message.reply_text("❌ Использование: /rate [число]")
             return
@@ -799,6 +771,10 @@ async def set_currency_rate_command(update: Update, context: ContextTypes.DEFAUL
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help - справка по командам"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Команда только для администраторов.")
+        return
+
     help_text = """🤖 Бот «Финансист» - Доступные команды:
 
 📋 Общие команды:
@@ -828,22 +804,31 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(help_text)
 
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /start - начальное приветствие и проверка доступа"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Доступ запрещен. Этот бот предназначен только для администраторов.")
+        return
+        
+    await update.message.reply_text("🤖 Бот «Финансист» запущен. Используйте /help для списка команд.")
+
 def main():
     """Основная функция запуска бота"""
-    if BOT_TOKEN == "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0":
+    if BOT_TOKEN == "YOUR_BOT_TOKEN":
         print("❌ Ошибка: Не установлен токен бота!")
         print("Замените BOT_TOKEN в файле на токен, полученный от @BotFather")
         return
     
-    if ADMIN_USER_IDS == [123456789]:
+    if ADMIN_USER_IDS == [YOUR_ADMIN_ID]:
         print("⚠️ Предупреждение: Не установлены ID администраторов!")
         print("Измените ADMIN_USER_IDS в файле на ваши Telegram User ID")
     
     try:
-        # Создание приложения
         application = Application.builder().token(BOT_TOKEN).build()
         
         # Регистрация обработчиков команд
+        application.add_handler(CommandHandler("start", start_command))
+        application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("percent", set_rate_command))
         application.add_handler(CommandHandler("app", create_application_command))
         application.add_handler(CommandHandler(["in_progress", "in"], in_progress_command))
@@ -855,10 +840,7 @@ def main():
         application.add_handler(CommandHandler("reset", reset_command))
         application.add_handler(CommandHandler("set_admin_chat", set_admin_chat_command))
         application.add_handler(CommandHandler("rate", set_currency_rate_command))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("start", help_command))
         
-        # Запуск бота
         print("✅ Бот «Финансист» запущен успешно!")
         print("Нажмите Ctrl+C для остановки")
         logger.info("Запуск бота...")
@@ -870,7 +852,7 @@ def main():
         print("\n🔧 Проверьте:")
         print("1. Правильность токена бота")
         print("2. Интернет-соединение")
-        print("3. Установлена ли библиотека: pip install python-telegram-bot==21.5")
+        print("3. Установлена ли библиотека: pip install python-telegram-bot")
 
 if __name__ == '__main__':
     main()
