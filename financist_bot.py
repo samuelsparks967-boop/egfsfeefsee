@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 # --- Конфигурация ---
 # !!! ЗАМЕНИТЕ ЭТО НА ВАШИ ДАННЫЕ !!!
-BOT_TOKEN = "8016985561:AAF3E63eZ_94wdCXWjFunE--Dxkfgy9FEPg"  # Замените на ваш токен бота
-ADMIN_USER_IDS = [6772666050, 7610385492]
+BOT_TOKEN = "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0"  # Замените на ваш токен бота
+ADMIN_USER_IDS = [7610385492]
 
 # --- Управление базой данных ---
 class FinancistBot:
@@ -856,3 +856,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
