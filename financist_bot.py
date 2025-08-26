@@ -863,11 +863,6 @@ def main():
         print("❌ Ошибка: Не установлен токен бота!")
         print("Замените BOT_TOKEN в файле на токен, полученный от @BotFather")
         return
-    
-    if ADMIN_USER_IDS == [YOUR_ADMIN_ID]:
-        print("⚠️ Предупреждение: Не установлены ID администраторов!")
-        print("Измените ADMIN_USER_IDS в файле на ваши Telegram User ID")
-        return
 
     try:
         application = Application.builder().token(BOT_TOKEN).build()
@@ -903,3 +898,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
