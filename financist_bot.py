@@ -677,13 +677,17 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not bot_instance.is_admin(update.effective_user.id):
         await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
         return
+    
     admin_chat_id = bot_instance.get_setting('admin_chat_id')
-    if not bot_instance.is_admin_chat(update.effective_chat.id):
-        await update.message.reply_text("❌ Эта команда доступна только в админском чате.")
+    
+    # Проверка, установлен ли админский чат
+    if not admin_chat_id:
+        await update.message.reply_text("❌ Сначала нужно установить админский чат командой /set_admin_chat.")
         return
-
+        
     daily_stats_message = await generate_full_daily_stats()
     if daily_stats_message:
+        # Отправляем полный отчет только в админский чат
         await context.bot.send_message(chat_id=int(admin_chat_id), text="📈 **Дневной отчёт перед сбросом:**\n\n" + daily_stats_message, parse_mode='Markdown')
         await update.message.reply_text("✅ Статистика за день была успешно отправлена в админский чат.")
 
