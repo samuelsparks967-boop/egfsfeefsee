@@ -409,6 +409,56 @@ async def chewed_application_command(update: Update, context: ContextTypes.DEFAU
         logger.error(f"Ошибка в команде /chewed: {e}")
         await update.message.reply_text("❌ Произошла ошибка при выполнении команды.")
 
+async def block_application_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /block [номер_заявки] [ник_исполнителя] или ответ на сообщение"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+        return
+    try:
+        app_id = None
+        if context.args:
+            app_id = int(re.sub(r'[^0-9]', '', context.args[0]))
+        else:
+            app_id = get_app_id_from_reply(update)
+
+        if not app_id:
+            await update.message.reply_text("❌ Укажите номер заявки или дайте ответ на сообщение с заявкой.")
+            return
+        
+        with sqlite3.connect(bot_instance.db_path) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT * FROM applications WHERE id = ? AND status IN (?, ?) AND chat_id = ?', 
+                           (app_id, 'active', 'in_progress', update.effective_chat.id))
+            application = cursor.fetchone()
+            
+            if not application:
+                await update.message.reply_text("❌ Активная заявка с таким номером в этом чате не найдена.")
+                return
+            
+            processing_user = get_processing_user(update, context)
+            blocking_date = datetime.now()
+            cursor.execute('''
+                UPDATE applications 
+                SET status = 'blocked', blocking_date = ?, processing_user = ?
+                WHERE id = ?
+            ''', (blocking_date, processing_user, app_id))
+            conn.commit()
+            
+            message = f"""❌ Заявка №{app_id}
+Сумма: {application[2]:.0f}₽
+Банк: {escape_markdown(application[5])}
+Принимал: {escape_markdown(processing_user)}
+Статус: Заблокирована"""
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+    except ValueError:
+        await update.message.reply_text("❌ Неверный формат номера заявки.")
+    except Exception as e:
+        logger.error(f"Ошибка в команде /block: {e}")
+        await update.message.reply_text("❌ Произошла ошибка при выполнении команды.")
+
 async def delete_application_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /delete [номер_заявки] или ответ на сообщение"""
     if not bot_instance.is_admin(update.effective_user.id):
@@ -847,31 +897,33 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """🤖 Бот «Финансист» - Доступные команды:
 
 📋 Общие команды:
-• /app [ник] [сумма] [банк] - создать новую заявку
-• /in или /in_progress [номер] [ник_исполнителя] - взять заявку в работу
-• /accept [номер] [ник_исполнителя] - завершить заявку
-• /chewed [номер] [ник_исполнителя] - пометить заявку как зажеванную
-• /del [номер] - удалить заявку
-• /debt [пользователь] [сумма] - записать выданный долг
-• /stats - показать статистику (только для этого чата)
+- /app [ник] [сумма] [банк] - создать новую заявку
+- /in или /in_progress [номер] [ник_исполнителя] - взять заявку в работу
+- /accept [номер] [ник_исполнителя] - завершить заявку
+- /block [номер] [ник_исполнителя] - заблокировать заявку
+- /chewed [номер] [ник_исполнителя] - пометить заявку как зажеванную
+- /del [номер] - удалить заявку
+- /debt [пользователь] [сумма] - записать выданный долг
+- /stats - показать статистику (только для этого чата)
 
 ⚙️ Команды для настройки:
-• /set_admin_chat - установить текущий чат как админский
-• /percent [число] - установить процентную ставку
-• /rate [число] - установить курс валют
-• /balance [сумма] - пополнить баланс
-• /reset - сбросить все заявки и отправить полный отчет по всем чатам
-• /help - показать эту справку
+- /set_admin_chat - установить текущий чат как админский
+- /percent [число] - установить процентную ставку
+- /rate [число] - установить курс валют
+- /balance [сумма] - пополнить баланс
+- /reset - сбросить все заявки и отправить полный отчет по всем чатам
+- /help - показать эту справку
 
 📝 Примеры:
-• /app @user 100000 Альфа
-• /in 1 @butch
-• /accept 2 @krip
-• /chewed 4 @butch
-• /del 5
-• /debt @user 5000
-• /percent 6
-• /rate 95.5"""
+- /app @user 100000 Альфа
+- /in 1 @butch
+- /accept 2 @krip
+- /block 3 @butch
+- /chewed 4 @butch
+- /del 5
+- /debt @user 5000
+- /percent 6
+- /rate 95.5"""
     
     await update.message.reply_text(help_text)
 
@@ -899,6 +951,7 @@ def main():
         application.add_handler(CommandHandler("chewed", chewed_application_command))
         application.add_handler(CommandHandler(["delete", "del"], delete_application_command))
         application.add_handler(CommandHandler("debt", add_debt_command))
+        application.add_handler(CommandHandler("block", block_application_command))
         application.add_handler(CommandHandler("balance", balance_command))
         application.add_handler(CommandHandler("stats", stats_command))
         application.add_handler(CommandHandler("reset", reset_command))
