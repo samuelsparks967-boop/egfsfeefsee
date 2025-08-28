@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # !!! ЗАМЕНИТЕ ЭТО НА ВАШИ ДАННЫЕ !!!
 BOT_TOKEN = "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0"  # Замените на ваш токен бота
 ADMIN_USER_IDS = [7610385492, 8209692488, 8221083095]
-ADMIN_USERNAMES_TO_EXCLUDE = [@V1nceent_Vega, @Jules_W1nnf1eld, @BUTCH_C00L1DGE]
+ADMIN_USERNAMES_TO_EXCLUDE = []
 
 # --- Управление базой данных ---
 class FinancistBot:
@@ -1079,3 +1079,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
