@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 # --- Конфигурация ---
 # !!! ЗАМЕНИТЕ ЭТО НА ВАШИ ДАННЫЕ !!!
-BOT_TOKEN = "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0"  # Замените на ваш токен бота
-ADMIN_USER_IDS = [7610385492, 8209692488, 8221083095]
+BOT_TOKEN = "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0"  # Замените на ваш токен бота 
+ADMIN_USER_IDS = [7610385492, 8209692488, 8221083095] 
 ADMIN_USERNAMES_TO_EXCLUDE = []
 
 # --- Управление базой данных ---
@@ -713,7 +713,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             message += "\nНет должников"
         
-        # Add per-user statistics to the stats command
         message += await get_all_user_stats(chat_id)
         
         await update.message.reply_text(message, parse_mode='Markdown')
@@ -796,14 +795,21 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     try:
+        # Сначала генерируем отчет ПЕРЕД сохранением в preserved_stats
+        daily_stats_message = await generate_full_daily_stats()
+        if daily_stats_message:
+            await context.bot.send_message(chat_id=int(admin_chat_id), text="📈 **Дневной отчёт перед сбросом:**\n\n" + daily_stats_message, parse_mode='Markdown')
+            await update.message.reply_text("✅ Статистика за день была успешно отправлена в админский чат.")
+
         with sqlite3.connect(bot_instance.db_path) as conn:
             cursor = conn.cursor()
             
-            # Select all blocked and chewed applications
+            # Select all blocked and chewed applications created today
+            today_start = datetime.combine(date.today(), datetime.min.time())
             cursor.execute('''
                 SELECT id, chat_id, user_nickname, initial_amount, status, bank, processing_user, blocking_date
                 FROM applications
-                WHERE status IN ('blocked', 'chewed')
+                WHERE status IN ('blocked', 'chewed') AND date(blocking_date) = date('now', 'localtime')
             ''')
             preserved_apps = cursor.fetchall()
             
@@ -815,12 +821,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ''', (preserved_apps))
                 conn.commit()
 
-        daily_stats_message = await generate_full_daily_stats()
-        if daily_stats_message:
-            await context.bot.send_message(chat_id=int(admin_chat_id), text="📈 **Дневной отчёт перед сбросом:**\n\n" + daily_stats_message, parse_mode='Markdown')
-            await update.message.reply_text("✅ Статистика за день была успешно отправлена в админский чат.")
-
-        # Archive all other applications (active, in_progress, completed)
+        # Archive ALL applications (включая заблокированные и зажеванные за сегодня)
         with sqlite3.connect(bot_instance.db_path) as conn:
             cursor = conn.cursor()
             archived_date = datetime.now()
@@ -828,7 +829,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute('''
                 UPDATE applications
                 SET status = 'archived', archived_date = ?
-                WHERE status IN ('active', 'in_progress', 'completed')
+                WHERE status IN ('active', 'in_progress', 'completed', 'blocked', 'chewed')
             ''', (archived_date,))
             
             rows_updated = cursor.rowcount
@@ -843,7 +844,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def generate_full_daily_stats():
     """
     Генерирует полный отчет за текущий день для всех чатов.
-    Включает данные из preserved_stats.
+    НЕ включает данные из preserved_stats для избежания дублирования.
     """
     try:
         with sqlite3.connect(bot_instance.db_path) as conn:
@@ -854,8 +855,8 @@ async def generate_full_daily_stats():
 
             stats_message = f"🗓️ **Полный отчет за {datetime.now().strftime('%d.%m.%Y')}**\n\n"
 
-            cursor.execute('SELECT DISTINCT chat_id FROM applications')
-            all_chat_ids = [row[0] for row in cursor.fetchall() if row[0] is not None]
+            cursor.execute('SELECT DISTINCT chat_id FROM applications WHERE chat_id IS NOT NULL')
+            all_chat_ids = [row[0] for row in cursor.fetchall()]
 
             total_profit_all_usd = 0
             for chat_id in all_chat_ids:
@@ -867,65 +868,49 @@ async def generate_full_daily_stats():
                 
                 stats_message += f"--- Отчет для чата '{chat_name}' ---\n"
                 
+                # Получаем только заявки из основной таблицы applications за сегодня
                 cursor.execute('''
                     SELECT id, initial_amount, final_amount, user_nickname, bank, status, processing_user
                     FROM applications
-                    WHERE date(blocking_date) = ? AND chat_id = ?
+                    WHERE date(blocking_date) = ? AND chat_id = ? AND status IN ('completed', 'blocked', 'chewed')
                     ORDER BY blocking_date
                 ''', (today, chat_id))
                 today_applications = cursor.fetchall()
-
-                cursor.execute('''
-                    SELECT app_id, initial_amount, status, user_nickname, bank, processing_user
-                    FROM preserved_stats
-                    WHERE chat_id = ? AND date(saved_date) = ?
-                ''', (chat_id, today))
-                preserved_stats_today = cursor.fetchall()
                 
-                if not today_applications and not preserved_stats_today:
+                if not today_applications:
                     stats_message += "Нет выполненных заявок за сегодня.\n\n"
                     continue
 
-                total_completed_rub = sum(app[1] for app in today_applications if app[5] == 'completed')
-                total_paid_rub = sum(app[2] for app in today_applications if app[5] == 'completed')
-                
-                today_blocked_rub = sum(app[1] for app in today_applications if app[5] == 'blocked')
-                today_chewed_rub = sum(app[1] for app in today_applications if app[5] == 'chewed')
-                
-                preserved_blocked_rub = sum(app[1] for app in preserved_stats_today if app[2] == 'blocked')
-                preserved_chewed_rub = sum(app[1] for app in preserved_stats_today if app[2] == 'chewed')
-                
-                total_blocked_rub = today_blocked_rub + preserved_blocked_rub
-                total_chewed_rub = today_chewed_rub + preserved_chewed_rub
+                # Разделяем заявки по статусам
+                completed_apps = [app for app in today_applications if app[5] == 'completed']
+                blocked_apps = [app for app in today_applications if app[5] == 'blocked']
+                chewed_apps = [app for app in today_applications if app[5] == 'chewed']
+
+                total_completed_rub = sum(app[1] for app in completed_apps)
+                total_paid_rub = sum(app[2] for app in completed_apps)
+                total_blocked_rub = sum(app[1] for app in blocked_apps)
+                total_chewed_rub = sum(app[1] for app in chewed_apps)
                 
                 total_profit_rub = total_completed_rub - total_paid_rub
                 total_profit_usd = total_profit_rub / currency_rate if currency_rate > 0 else 0
                 total_profit_all_usd += total_profit_usd
                 
                 stats_message += "**--- Завершенные заявки ---**\n"
-                for app in today_applications:
-                    if app[5] == 'completed':
-                        final_usd = app[2] / currency_rate if currency_rate > 0 else 0
-                        stats_message += f"✅ #{app[0]} | {escape_markdown(app[3])} | {app[1]:.0f}₽ ({escape_markdown(app[4])}) -> {final_usd:.2f}$ | Принимал: {escape_markdown(app[6])}\n"
+                for app in completed_apps:
+                    final_usd = app[2] / currency_rate if currency_rate > 0 else 0
+                    stats_message += f"✅ #{app[0]} | {escape_markdown(app[3])} | {app[1]:.0f}₽ ({escape_markdown(app[4])}) -> {final_usd:.2f}$ | Принимал: {escape_markdown(app[6])}\n"
                 
                 stats_message += "\n**--- Заблокированные и зажеванные заявки ---**\n"
-                all_preserved_apps = [app for app in today_applications if app[5] in ('blocked', 'chewed')] + list(preserved_stats_today)
-                for app in all_preserved_apps:
-                    if len(app) == 7: # Application from the main table
-                        app_id, initial_amount, _, _, nickname, bank, processing_user = app
-                        status = app[5]
-                    else: # Application from preserved_stats table
-                        app_id, initial_amount, status, nickname, bank, processing_user = app
-                    
-                    if status == 'blocked':
-                        stats_message += f"❌ #{app_id} | {escape_markdown(nickname)} | {initial_amount:.0f}₽ ({escape_markdown(bank)}) | Принимал: {escape_markdown(processing_user)}\n"
-                    elif status == 'chewed':
-                        stats_message += f"⚠️ #{app_id} | {escape_markdown(nickname)} | {initial_amount:.0f}₽ ({escape_markdown(bank)}) | Принимал: {escape_markdown(processing_user)}\n"
+                for app in blocked_apps:
+                    stats_message += f"❌ #{app[0]} | {escape_markdown(app[3])} | {app[1]:.0f}₽ ({escape_markdown(app[4])}) | Принимал: {escape_markdown(app[6])}\n"
+                
+                for app in chewed_apps:
+                    stats_message += f"⚠️ #{app[0]} | {escape_markdown(app[3])} | {app[1]:.0f}₽ ({escape_markdown(app[4])}) | Принимал: {escape_markdown(app[6])}\n"
 
                 stats_message += f"\n**--- Общий итог для чата ---**\n"
-                stats_message += f"✅ Завершено: {len([a for a in today_applications if a[5] == 'completed'])} на {total_completed_rub:.0f}₽\n"
-                stats_message += f"❌ Заблокировано: {len([a for a in today_applications if a[5] == 'blocked']) + len([a for a in preserved_stats_today if a[2] == 'blocked'])} на {total_blocked_rub:.0f}₽\n"
-                stats_message += f"⚠️ Зажевано: {len([a for a in today_applications if a[5] == 'chewed']) + len([a for a in preserved_stats_today if a[2] == 'chewed'])} на {total_chewed_rub:.0f}₽\n"
+                stats_message += f"✅ Завершено: {len(completed_apps)} на {total_completed_rub:.0f}₽\n"
+                stats_message += f"❌ Заблокировано: {len(blocked_apps)} на {total_blocked_rub:.0f}₽\n"
+                stats_message += f"⚠️ Зажевано: {len(chewed_apps)} на {total_chewed_rub:.0f}₽\n"
                 stats_message += f"💰 Прибыль: {total_profit_rub:.0f}₽ ({total_profit_usd:.2f}$)\n\n"
 
             stats_message += "**--- Общая статистика для всех чатов ---**\n"
@@ -939,8 +924,12 @@ async def generate_full_daily_stats():
             cursor.execute('SELECT SUM(initial_amount) FROM applications WHERE status = "chewed" AND date(blocking_date) = ?', (today,))
             total_chewed_all_rub = cursor.fetchone()[0] or 0
             
-            cursor.execute('SELECT SUM(initial_amount) FROM preserved_stats')
-            total_preserved_rub = cursor.fetchone()[0] or 0
+            # Получаем общую сумму из preserved_stats для показа накопленной статистики
+            cursor.execute('SELECT SUM(initial_amount) FROM preserved_stats WHERE status = "blocked"')
+            total_preserved_blocked_rub = cursor.fetchone()[0] or 0
+            
+            cursor.execute('SELECT SUM(initial_amount) FROM preserved_stats WHERE status = "chewed"')
+            total_preserved_chewed_rub = cursor.fetchone()[0] or 0
 
             total_profit_all_rub = total_completed_all_rub * bot_instance.get_setting('current_rate') / 100
             total_profit_all_usd = total_profit_all_rub / currency_rate if currency_rate > 0 else 0
@@ -949,14 +938,13 @@ async def generate_full_daily_stats():
             stats_message += f"❌ Заблокировано (все чаты): {total_blocked_all_rub:.0f}₽\n"
             stats_message += f"⚠️ Зажевано (все чаты): {total_chewed_all_rub:.0f}₽\n"
             stats_message += f"💰 Общая прибыль: {total_profit_all_rub:.0f}₽ ({total_profit_all_usd:.2f}$)\n"
-            stats_message += f"\n_Общая статистика с учётом всех сохранённых заявок:\n❌ Заблокировано: {total_blocked_all_rub + total_preserved_rub:.0f}₽\n⚠️ Зажевано: {total_chewed_all_rub + total_preserved_rub:.0f}₽_"
+            stats_message += f"\n_Общая накопленная статистика всех заблокированных/зажеванных заявок:\n❌ Всего заблокировано: {total_blocked_all_rub + total_preserved_blocked_rub:.0f}₽\n⚠️ Всего зажевано: {total_chewed_all_rub + total_preserved_chewed_rub:.0f}₽_"
 
             return stats_message
             
     except Exception as e:
         logger.error(f"Ошибка при генерации полного дневного отчета: {e}")
         return "❌ Не удалось сгенерировать полный отчет."
-
 
 async def set_admin_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /set_admin_chat - для установки текущего чата как админского"""
@@ -1079,4 +1067,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
