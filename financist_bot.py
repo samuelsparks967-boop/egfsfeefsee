@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 # --- Конфигурация ---
 # !!! ЗАМЕНИТЕ ЭТО НА ВАШИ ДАННЫЕ !!!
-BOT_TOKEN = "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0"  # Замените на ваш токен бота 
-ADMIN_USER_IDS = [7610385492, 8209692488, 8221083095] 
-ADMIN_USERNAMES_TO_EXCLUDE = []
+BOT_TOKEN = "8403274842:AAE5e8NrcWqUR09Ula9224-8hSA00KMGqp0"
+ADMIN_USER_IDS = [7610385492, 8209692488, 8221083095]
+ADMIN_USERNAMES_TO_EXCLUDE = ["@V1nceent_Vega", "@username2"] # Добавьте сюда имена пользователей администраторов
 
 # --- Управление базой данных ---
 class FinancistBot:
@@ -32,8 +32,11 @@ class FinancistBot:
     def init_database(self):
         """Инициализация базы данных"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            # Использование check_same_thread=False обязательно для асинхронных ботов
+            with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
                 cursor = conn.cursor()
+
+                cursor.execute('PRAGMA foreign_keys = ON')
 
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS settings (
@@ -41,6 +44,7 @@ class FinancistBot:
                         value REAL
                     )
                 ''')
+                conn.commit() # Явный коммит после создания таблицы settings
 
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS applications (
@@ -58,6 +62,7 @@ class FinancistBot:
                         chat_id INTEGER
                     )
                 ''')
+                conn.commit() # Явный коммит после создания таблицы applications
 
                 self._add_column_if_not_exists(cursor, 'applications', 'chat_id', 'INTEGER')
                 self._add_column_if_not_exists(cursor, 'applications', 'bank', 'TEXT')
@@ -79,6 +84,7 @@ class FinancistBot:
                         saved_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
+                conn.commit() # Явный коммит после создания таблицы preserved_stats
                 
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS debts (
@@ -86,6 +92,7 @@ class FinancistBot:
                         debt_amount REAL DEFAULT 0
                     )
                 ''')
+                conn.commit() # Явный коммит после создания таблицы debts
                 
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS balance (
@@ -93,6 +100,7 @@ class FinancistBot:
                         total_profit REAL DEFAULT 0
                     )
                 ''')
+                conn.commit() # Явный коммит после создания таблицы balance
                 
                 cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)',
                                ('current_rate', 5.0))
@@ -104,7 +112,7 @@ class FinancistBot:
                 cursor.execute('INSERT OR IGNORE INTO balance (id, total_profit) VALUES (?, ?)',
                                (1, 0.0))
                 
-                conn.commit()
+                conn.commit() # Финальный коммит для настроек и баланса
                 logger.info("База данных успешно инициализирована")
         except Exception as e:
             logger.error(f"Ошибка при инициализации базы данных: {e}")
@@ -124,7 +132,7 @@ class FinancistBot:
     def get_setting(self, key):
         """Получить настройку"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, check_same_thread=False) as conn: # Используем check_same_thread=False
                 cursor = conn.cursor()
                 cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
                 result = cursor.fetchone()
@@ -136,7 +144,7 @@ class FinancistBot:
     def set_setting(self, key, value):
         """Установить настройку"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, check_same_thread=False) as conn: # Используем check_same_thread=False
                 cursor = conn.cursor()
                 cursor.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
                                (key, value))
@@ -234,7 +242,7 @@ async def create_application_command(update: Update, context: ContextTypes.DEFAU
         current_rate = bot_instance.get_setting('current_rate')
         final_amount = initial_amount * (1 - current_rate / 100)
         
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO applications (user_nickname, initial_amount, rate_percentage, final_amount, bank, chat_id)
@@ -275,7 +283,7 @@ async def in_progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Укажите номер заявки или дайте ответ на сообщение с заявкой.")
             return
 
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             
             cursor.execute('SELECT * FROM applications WHERE id = ? AND status = ? AND chat_id = ?',
@@ -327,7 +335,7 @@ async def accept_application_command(update: Update, context: ContextTypes.DEFAU
             await update.message.reply_text("❌ Укажите номер заявки или дайте ответ на сообщение с заявкой.")
             return
         
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             
             cursor.execute('SELECT * FROM applications WHERE id = ? AND status IN (?, ?) AND chat_id = ?',
@@ -376,7 +384,7 @@ async def chewed_application_command(update: Update, context: ContextTypes.DEFAU
             await update.message.reply_text("❌ Укажите номер заявки или дайте ответ на сообщение с заявкой.")
             return
         
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             
             cursor.execute('SELECT * FROM applications WHERE id = ? AND status IN (?, ?) AND chat_id = ?',
@@ -426,7 +434,7 @@ async def block_application_command(update: Update, context: ContextTypes.DEFAUL
             await update.message.reply_text("❌ Укажите номер заявки или дайте ответ на сообщение с заявкой.")
             return
         
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             
             cursor.execute('SELECT * FROM applications WHERE id = ? AND status IN (?, ?) AND chat_id = ?',
@@ -476,7 +484,7 @@ async def delete_application_command(update: Update, context: ContextTypes.DEFAU
             await update.message.reply_text("❌ Укажите номер заявки или дайте ответ на сообщение с заявкой.")
             return
         
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             
             cursor.execute('SELECT id FROM applications WHERE id = ? AND chat_id = ?',
@@ -516,7 +524,7 @@ async def add_debt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Сумма должна быть положительной.")
             return
         
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             
             cursor.execute('SELECT debt_amount FROM debts WHERE user_nickname = ?',
@@ -556,7 +564,7 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Эта команда доступна только в админском чате.")
             return
         
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT total_profit FROM balance WHERE id = 1')
             current_balance = cursor.fetchone()[0]
@@ -567,7 +575,7 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         amount = float(context.args[0])
         
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             new_balance = current_balance + amount
             cursor.execute('UPDATE balance SET total_profit = ? WHERE id = 1', (new_balance,))
@@ -593,7 +601,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         current_date = datetime.now().strftime('%d.%m.%Y')
         
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             
             currency_rate = bot_instance.get_setting('currency_rate')
@@ -724,7 +732,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_all_user_stats(chat_id):
     """Generates statistics for all users in the specified chat."""
     try:
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn: # Используем check_same_thread=False
             cursor = conn.cursor()
 
             # Get all users who have processed applications
@@ -795,13 +803,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     try:
-        # Сначала генерируем отчет ПЕРЕД сохранением в preserved_stats
-        daily_stats_message = await generate_full_daily_stats()
-        if daily_stats_message:
-            await context.bot.send_message(chat_id=int(admin_chat_id), text="📈 **Дневной отчёт перед сбросом:**\n\n" + daily_stats_message, parse_mode='Markdown')
-            await update.message.reply_text("✅ Статистика за день была успешно отправлена в админский чат.")
-
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn: # Используем check_same_thread=False
             cursor = conn.cursor()
             
             # Select all blocked and chewed applications created today
@@ -811,25 +813,31 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 FROM applications
                 WHERE status IN ('blocked', 'chewed') AND date(blocking_date) = date('now', 'localtime')
             ''')
-            preserved_apps = cursor.fetchall()
+            preserved_apps_today = cursor.fetchall() # Заявки, заблокированные/зажеванные сегодня
             
             # Save them into the new table
-            if preserved_apps:
+            if preserved_apps_today:
                 cursor.executemany('''
                     INSERT INTO preserved_stats (app_id, chat_id, user_nickname, initial_amount, status, bank, processing_user, blocking_date)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (preserved_apps))
+                ''', (preserved_apps_today))
                 conn.commit()
 
-        # Archive ALL applications (включая заблокированные и зажеванные за сегодня)
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        # Генерируем отчет. Он будет включать только те заявки, которые были помечены сегодня
+        daily_stats_message = await generate_full_daily_stats()
+        if daily_stats_message:
+            await context.bot.send_message(chat_id=int(admin_chat_id), text="📈 **Дневной отчёт перед сбросом:**\n\n" + daily_stats_message, parse_mode='Markdown')
+            await update.message.reply_text("✅ Статистика за день была успешно отправлена в админский чат.")
+
+        # Архивируем все остальные заявки (active, in_progress, completed, а также заблокированные/зажеванные, но не сегодня)
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn: # Используем check_same_thread=False
             cursor = conn.cursor()
             archived_date = datetime.now()
             
             cursor.execute('''
                 UPDATE applications
                 SET status = 'archived', archived_date = ?
-                WHERE status IN ('active', 'in_progress', 'completed', 'blocked', 'chewed')
+                WHERE status IN ('active', 'in_progress', 'completed') OR (status IN ('blocked', 'chewed') AND date(blocking_date) < date('now', 'localtime'))
             ''', (archived_date,))
             
             rows_updated = cursor.rowcount
@@ -844,10 +852,10 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def generate_full_daily_stats():
     """
     Генерирует полный отчет за текущий день для всех чатов.
-    НЕ включает данные из preserved_stats для избежания дублирования.
+    Включает данные из preserved_stats.
     """
     try:
-        with sqlite3.connect(bot_instance.db_path) as conn:
+        with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn: # Используем check_same_thread=False
             cursor = conn.cursor()
             
             currency_rate = bot_instance.get_setting('currency_rate')
@@ -877,19 +885,35 @@ async def generate_full_daily_stats():
                 ''', (today, chat_id))
                 today_applications = cursor.fetchall()
                 
-                if not today_applications:
+                # Получаем сохраненные заявки, которые были сохранены СЕГОДНЯ
+                cursor.execute('''
+                    SELECT app_id, initial_amount, status, user_nickname, bank, processing_user, blocking_date
+                    FROM preserved_stats
+                    WHERE chat_id = ? AND date(saved_date) = ?
+                    ORDER BY saved_date
+                ''', (chat_id, today))
+                preserved_stats_today = cursor.fetchall()
+                
+                if not today_applications and not preserved_stats_today:
                     stats_message += "Нет выполненных заявок за сегодня.\n\n"
                     continue
 
-                # Разделяем заявки по статусам
+                # Разделяем заявки по статусам для текущего дня
                 completed_apps = [app for app in today_applications if app[5] == 'completed']
-                blocked_apps = [app for app in today_applications if app[5] == 'blocked']
-                chewed_apps = [app for app in today_applications if app[5] == 'chewed']
+                blocked_apps_today = [app for app in today_applications if app[5] == 'blocked']
+                chewed_apps_today = [app for app in today_applications if app[5] == 'chewed']
+
+                # Добавляем к ним заблокированные/зажеванные из preserved_stats_today
+                blocked_apps_from_preserved = [app for app in preserved_stats_today if app[2] == 'blocked']
+                chewed_apps_from_preserved = [app for app in preserved_stats_today if app[2] == 'chewed']
+
+                all_blocked_today = blocked_apps_today + blocked_apps_from_preserved
+                all_chewed_today = chewed_apps_today + chewed_apps_from_preserved
 
                 total_completed_rub = sum(app[1] for app in completed_apps)
                 total_paid_rub = sum(app[2] for app in completed_apps)
-                total_blocked_rub = sum(app[1] for app in blocked_apps)
-                total_chewed_rub = sum(app[1] for app in chewed_apps)
+                total_blocked_rub_today = sum(app[1] for app in all_blocked_today)
+                total_chewed_rub_today = sum(app[1] for app in all_chewed_today)
                 
                 total_profit_rub = total_completed_rub - total_paid_rub
                 total_profit_usd = total_profit_rub / currency_rate if currency_rate > 0 else 0
@@ -901,44 +925,56 @@ async def generate_full_daily_stats():
                     stats_message += f"✅ #{app[0]} | {escape_markdown(app[3])} | {app[1]:.0f}₽ ({escape_markdown(app[4])}) -> {final_usd:.2f}$ | Принимал: {escape_markdown(app[6])}\n"
                 
                 stats_message += "\n**--- Заблокированные и зажеванные заявки ---**\n"
-                for app in blocked_apps:
-                    stats_message += f"❌ #{app[0]} | {escape_markdown(app[3])} | {app[1]:.0f}₽ ({escape_markdown(app[4])}) | Принимал: {escape_markdown(app[6])}\n"
-                
-                for app in chewed_apps:
-                    stats_message += f"⚠️ #{app[0]} | {escape_markdown(app[3])} | {app[1]:.0f}₽ ({escape_markdown(app[4])}) | Принимал: {escape_markdown(app[6])}\n"
+                # Выводим уникальные заблокированные/зажеванные заявки
+                displayed_app_ids = set()
+                for app in all_blocked_today + all_chewed_today:
+                    app_id = app[0] if len(app) == 7 else app[0] # app_id in preserved_stats is app[0]
+                    if app_id not in displayed_app_ids:
+                        displayed_app_ids.add(app_id)
+                        if len(app) == 7: # From applications table
+                            app_id, initial_amount, _, _, nickname, bank, processing_user = app
+                            status = app[5]
+                        else: # From preserved_stats table
+                            app_id, initial_amount, status, nickname, bank, processing_user, _ = app[0], app[1], app[2], app[3], app[4], app[5], app[6]
+                        
+                        if status == 'blocked':
+                            stats_message += f"❌ #{app_id} | {escape_markdown(nickname)} | {initial_amount:.0f}₽ ({escape_markdown(bank)}) | Принимал: {escape_markdown(processing_user)}\n"
+                        elif status == 'chewed':
+                            stats_message += f"⚠️ #{app_id} | {escape_markdown(nickname)} | {initial_amount:.0f}₽ ({escape_markdown(bank)}) | Принимал: {escape_markdown(processing_user)}\n"
 
                 stats_message += f"\n**--- Общий итог для чата ---**\n"
                 stats_message += f"✅ Завершено: {len(completed_apps)} на {total_completed_rub:.0f}₽\n"
-                stats_message += f"❌ Заблокировано: {len(blocked_apps)} на {total_blocked_rub:.0f}₽\n"
-                stats_message += f"⚠️ Зажевано: {len(chewed_apps)} на {total_chewed_rub:.0f}₽\n"
+                stats_message += f"❌ Заблокировано: {len(all_blocked_today)} на {total_blocked_rub_today:.0f}₽\n"
+                stats_message += f"⚠️ Зажевано: {len(all_chewed_today)} на {total_chewed_rub_today:.0f}₽\n"
                 stats_message += f"💰 Прибыль: {total_profit_rub:.0f}₽ ({total_profit_usd:.2f}$)\n\n"
 
             stats_message += "**--- Общая статистика для всех чатов ---**\n"
             
+            # Общая статистика за сегодня (из applications)
             cursor.execute('SELECT SUM(initial_amount) FROM applications WHERE status = "completed" AND date(blocking_date) = ?', (today,))
-            total_completed_all_rub = cursor.fetchone()[0] or 0
+            total_completed_all_rub_today = cursor.fetchone()[0] or 0
 
             cursor.execute('SELECT SUM(initial_amount) FROM applications WHERE status = "blocked" AND date(blocking_date) = ?', (today,))
-            total_blocked_all_rub = cursor.fetchone()[0] or 0
+            total_blocked_all_rub_today = cursor.fetchone()[0] or 0
             
             cursor.execute('SELECT SUM(initial_amount) FROM applications WHERE status = "chewed" AND date(blocking_date) = ?', (today,))
-            total_chewed_all_rub = cursor.fetchone()[0] or 0
+            total_chewed_all_rub_today = cursor.fetchone()[0] or 0
             
-            # Получаем общую сумму из preserved_stats для показа накопленной статистики
+            # Общая накопленная статистика из preserved_stats
             cursor.execute('SELECT SUM(initial_amount) FROM preserved_stats WHERE status = "blocked"')
             total_preserved_blocked_rub = cursor.fetchone()[0] or 0
             
             cursor.execute('SELECT SUM(initial_amount) FROM preserved_stats WHERE status = "chewed"')
             total_preserved_chewed_rub = cursor.fetchone()[0] or 0
 
-            total_profit_all_rub = total_completed_all_rub * bot_instance.get_setting('current_rate') / 100
+            total_profit_all_rub = total_completed_all_rub_today * bot_instance.get_setting('current_rate') / 100
             total_profit_all_usd = total_profit_all_rub / currency_rate if currency_rate > 0 else 0
 
-            stats_message += f"✅ Завершено (все чаты): {total_completed_all_rub:.0f}₽\n"
-            stats_message += f"❌ Заблокировано (все чаты): {total_blocked_all_rub:.0f}₽\n"
-            stats_message += f"⚠️ Зажевано (все чаты): {total_chewed_all_rub:.0f}₽\n"
+            stats_message += f"✅ Завершено (все чаты): {total_completed_all_rub_today:.0f}₽\n"
+            stats_message += f"❌ Заблокировано (все чаты): {total_blocked_all_rub_today:.0f}₽\n"
+            stats_message += f"⚠️ Зажевано (все чаты): {total_chewed_all_rub_today:.0f}₽\n"
             stats_message += f"💰 Общая прибыль: {total_profit_all_rub:.0f}₽ ({total_profit_all_usd:.2f}$)\n"
-            stats_message += f"\n_Общая накопленная статистика всех заблокированных/зажеванных заявок:\n❌ Всего заблокировано: {total_blocked_all_rub + total_preserved_blocked_rub:.0f}₽\n⚠️ Всего зажевано: {total_chewed_all_rub + total_preserved_chewed_rub:.0f}₽_"
+            stats_message += f"\n_Общая накопленная статистика всех заблокированных/зажеванных заявок:\n❌ Всего заблокировано: {total_preserved_blocked_rub:.0f}₽\n⚠️ Всего зажевано: {total_preserved_chewed_rub:.0f}₽_"
 
             return stats_message
             
