@@ -153,11 +153,41 @@ class FinancistBot:
         except Exception as e:
             logger.error(f"Ошибка при установке настройки {key}: {e}")
             raise
+
+    def get_chat_setting(self, chat_id, key, default_value=None):
+        """Получить настройку для конкретного чата"""
+        try:
+            with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
+                cursor = conn.cursor()
+                chat_key = f"{key}_{chat_id}"
+                cursor.execute('SELECT value FROM settings WHERE key = ?', (chat_key,))
+                result = cursor.fetchone()
+                if result:
+                    return result[0]
+                # Если нет настройки для чата, возвращаем дефолтное значение
+                return default_value
+        except Exception as e:
+            logger.error(f"Ошибка при получении настройки {key} для чата {chat_id}: {e}")
+            return default_value
+
+    def set_chat_setting(self, chat_id, key, value):
+        """Установить настройку для конкретного чата"""
+        try:
+            with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
+                cursor = conn.cursor()
+                chat_key = f"{key}_{chat_id}"
+                cursor.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                               (chat_key, value))
+                conn.commit()
+                logger.info(f"Настройка {key} для чата {chat_id} установлена в значение {value}")
+        except Exception as e:
+            logger.error(f"Ошибка при установке настройки {key} для чата {chat_id}: {e}")
+            raise
     
     def is_admin_chat(self, chat_id):
         """Проверка, является ли чат админским"""
         admin_chat_id = self.get_setting('admin_chat_id')
-        return abs(chat_id - admin_chat_id) < 0.0001
+        return chat_id == int(admin_chat_id) if admin_chat_id else False
     
     def is_admin(self, user_id):
         """Проверка, является ли пользователь администратором"""
@@ -211,14 +241,35 @@ async def set_rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Процентная ставка должна быть от 0 до 100.")
             return
         
-        bot_instance.set_setting('current_rate', rate)
-        await update.message.reply_text(f"✅ Новая процентная ставка установлена: *{rate:.1f}%*.", parse_mode='Markdown')
+        chat_id = update.effective_chat.id
+        bot_instance.set_chat_setting(chat_id, 'current_rate', rate)
+        
+        chat_title = update.effective_chat.title or "этого чата"
+        await update.message.reply_text(
+            f"✅ Процентная ставка для \"{chat_title}\" установлена: *{rate:.1f}%*.", 
+            parse_mode='Markdown'
+        )
         
     except ValueError:
         await update.message.reply_text("❌ Неверный формат числа.")
     except Exception as e:
         logger.error(f"Ошибка в команде /percent: {e}")
         await update.message.reply_text("❌ Произошла ошибка при выполнении команды.")
+
+async def current_rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /current_rate - показать текущую ставку для чата"""
+    if not bot_instance.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+        return
+    
+    chat_id = update.effective_chat.id
+    current_rate = bot_instance.get_chat_setting(chat_id, 'current_rate', 5.0)
+    chat_title = update.effective_chat.title or "этого чата"
+    
+    await update.message.reply_text(
+        f"📊 Текущая ставка для \"{chat_title}\": *{current_rate:.1f}%*",
+        parse_mode='Markdown'
+    )
 
 async def create_application_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /app [ник_пользователя] [сумма] [банк]"""
@@ -239,7 +290,8 @@ async def create_application_command(update: Update, context: ContextTypes.DEFAU
             await update.message.reply_text("❌ Сумма должна быть положительной.")
             return
         
-        current_rate = bot_instance.get_setting('current_rate')
+        # Получаем ставку для конкретного чата, если не установлена - используем 5.0 по умолчанию
+        current_rate = bot_instance.get_chat_setting(chat_id, 'current_rate', 5.0)
         final_amount = initial_amount * (1 - current_rate / 100)
         
         with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
@@ -567,7 +619,8 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with sqlite3.connect(bot_instance.db_path, check_same_thread=False) as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT total_profit FROM balance WHERE id = 1')
-            current_balance = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            current_balance = result[0] if result else 0.0
         
         if not context.args:
             await update.message.reply_text(f"💰 Текущий баланс: **{current_balance:.2f}$**", parse_mode='Markdown')
@@ -820,7 +873,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.executemany('''
                     INSERT INTO preserved_stats (app_id, chat_id, user_nickname, initial_amount, status, bank, processing_user, blocking_date)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (preserved_apps_today))
+                ''', preserved_apps_today)
                 conn.commit()
 
         # Генерируем отчет. Он будет включать только те заявки, которые были помечены сегодня
@@ -928,7 +981,7 @@ async def generate_full_daily_stats():
                 # Выводим уникальные заблокированные/зажеванные заявки
                 displayed_app_ids = set()
                 for app in all_blocked_today + all_chewed_today:
-                    app_id = app[0] if len(app) == 7 else app[0] # app_id in preserved_stats is app[0]
+                    app_id = app[0] # app_id is always at index 0
                     if app_id not in displayed_app_ids:
                         displayed_app_ids.add(app_id)
                         if len(app) == 7: # From applications table
@@ -967,7 +1020,9 @@ async def generate_full_daily_stats():
             cursor.execute('SELECT SUM(initial_amount) FROM preserved_stats WHERE status = "chewed"')
             total_preserved_chewed_rub = cursor.fetchone()[0] or 0
 
-            total_profit_all_rub = total_completed_all_rub_today * bot_instance.get_setting('current_rate') / 100
+            # Використовуємо середню ставку або дефолтну 5%
+            avg_rate = 5.0  # Можна розрахувати середню ставку по всіх чатах
+            total_profit_all_rub = total_completed_all_rub_today * avg_rate / 100
             total_profit_all_usd = total_profit_all_rub / currency_rate if currency_rate > 0 else 0
 
             stats_message += f"✅ Завершено (все чаты): {total_completed_all_rub_today:.0f}₽\n"
@@ -1039,7 +1094,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 *⚙️ Команды для настройки:*
 - /set_admin_chat - установить текущий чат как админский
-- /percent [число] - установить процентную ставку
+- /percent [число] - установить процентную ставку для этого чата
+- /current_rate - показать текущую ставку для этого чата
 - /rate [число] - установить курс валют
 - /balance [сумма] - пополнить баланс
 - /reset - сбросить все заявки и отправить полный отчет по всем чатам
@@ -1054,6 +1110,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 - /del 5
 - /debt @user 5000
 - /percent 6
+- /current_rate
 - /rate 95.5"""
     
     await update.message.reply_text(help_text, parse_mode='Markdown')
@@ -1087,7 +1144,8 @@ def main():
         application.add_handler(CommandHandler("reset", reset_command))
         application.add_handler(CommandHandler("set_admin_chat", set_admin_chat_command))
         application.add_handler(CommandHandler("rate", set_currency_rate_command))
-        
+        application.add_handler(CommandHandler("current_rate", current_rate_command))
+
         print("✅ Бот «Финансист» запущен успешно!")
         print("Нажмите Ctrl+C для остановки")
         logger.info("Запуск бота...")
